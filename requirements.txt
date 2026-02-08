@@ -1,5 +1,6 @@
 # 2026 Recommended Stack for Gemini RAG
 streamlit
+langchain
 langchain-google-genai
 langchain-community
 pypdf
