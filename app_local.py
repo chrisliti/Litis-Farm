@@ -3,10 +3,12 @@ import os
 from dotenv import load_dotenv
 from langchain_community.vectorstores import FAISS
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
-# FIXED: Use the modern import path for RetrievalQA
-from langchain.chains import RetrievalQA
+from langchain.chains.retrieval_qa.base import RetrievalQA
 
-# 1. Load Environment Variables (Works locally with .env, safely ignored on Streamlit)
+
+
+
+# 1. Load Environment Variables
 load_dotenv()
 
 # --- ⚙️ UI CONFIGURATION ---
@@ -18,24 +20,15 @@ st.set_page_config(
 )
 
 # --- 📁 SETTINGS ---
-# Pull from os.environ (which includes Streamlit Secrets)
 DB_PATH = os.getenv("VECTOR_DB_PATH", "faiss_index")
 EMB_MODEL = os.getenv("EMBEDDING_MODEL", "models/gemini-embedding-001")
 INF_MODEL = os.getenv("INFERENCE_MODEL", "models/gemini-2.5-flash")
 
-# Ensure API Key is available
-if "GOOGLE_API_KEY" in st.secrets:
-    os.environ["GOOGLE_API_KEY"] = st.secrets["GOOGLE_API_KEY"]
-elif not os.getenv("GOOGLE_API_KEY"):
-    st.error("❌ GOOGLE_API_KEY missing. Add it to Streamlit Secrets or your .env file.")
-    st.stop()
-
 # --- 🧠 RAG INITIALIZATION ---
 @st.cache_resource
 def load_rag_chain():
-    # Look for the folder in the current directory
     if not os.path.exists(DB_PATH):
-        st.error(f"❌ Database folder '{DB_PATH}' not found. Ensure you pushed the folder to GitHub.")
+        st.error(f"❌ Database not found at '{DB_PATH}'. Please run 'python ingest.py' first.")
         st.stop()
 
     embeddings = GoogleGenerativeAIEmbeddings(
@@ -43,7 +36,6 @@ def load_rag_chain():
         task_type="RETRIEVAL_QUERY"
     )
     
-    # allow_dangerous_deserialization is required for loading .pkl files in FAISS
     db = FAISS.load_local(
         DB_PATH, 
         embeddings, 
@@ -59,14 +51,10 @@ def load_rag_chain():
         return_source_documents=True 
     )
 
-# Try/Except block helps catch specific connection or credential issues
-try:
-    qa_chain = load_rag_chain()
-except Exception as e:
-    st.error(f"Initialization Error: {e}")
-    st.stop()
+qa_chain = load_rag_chain()
 
 # --- 💬 UI HEADER ---
+# Using columns to place the Clear button on the same line as the title
 header_col, button_col = st.columns([3, 1])
 
 with header_col:
@@ -74,6 +62,7 @@ with header_col:
     st.caption(f"Engine: {INF_MODEL.split('/')[-1]}")
 
 with button_col:
+    # Adding some vertical space so the button aligns with the title text
     st.write("##") 
     if st.button("Clear Chat", use_container_width=True):
         st.session_state.messages = []
@@ -89,33 +78,34 @@ if "messages" not in st.session_state:
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
-        if "sources" in message and message["sources"]:
+        if "sources" in message:
             with st.expander("📚 Sources"):
                 for source in message["sources"]:
                     st.markdown(f"📌 {source}")
 
 # --- 🚀 CHAT INTERACTION ---
 if prompt := st.chat_input("Ask about LitisFarm..."):
+    # 1. User Message
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
+    # 2. Assistant Message
     with st.chat_message("assistant"):
         with st.spinner("Analyzing docs..."):
-            # Use invoke for modern LangChain compatibility
             response = qa_chain.invoke({"query": prompt})
             answer = response["result"]
-            source_docs = response.get("source_documents", [])
+            source_docs = response["source_documents"]
             
             st.markdown(answer)
             
+            # 3. Handle Citations
             citations = []
             if source_docs:
                 with st.expander("📚 View Citations"):
                     for i, doc in enumerate(source_docs):
-                        # Extract metadata safely
-                        source_path = doc.metadata.get('source', 'Unknown')
-                        file_name = os.path.basename(source_path)
+                        file_name = os.path.basename(doc.metadata.get('source', 'Unknown'))
+                        # +1 to convert computer 0-index to human page numbers
                         page_num = doc.metadata.get('page', 0) + 1
                         
                         cite = f"{file_name} (Page {page_num})"
@@ -125,6 +115,7 @@ if prompt := st.chat_input("Ask about LitisFarm..."):
                         st.caption(f"\"{doc.page_content[:150]}...\"")
                         if i < len(source_docs) - 1: st.divider()
 
+            # 4. Save to session
             st.session_state.messages.append({
                 "role": "assistant", 
                 "content": answer,

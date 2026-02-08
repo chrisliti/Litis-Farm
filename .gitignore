@@ -6,7 +6,7 @@ chatbot_env/
 
 # 3. Ignore the pre-processed Vector Database
 # (You usually want to re-run ingestion locally rather than downloading a large DB)
-faiss_index/
+#  faiss_index/
 
 # 4. Ignore Python cache files
 __pycache__/
