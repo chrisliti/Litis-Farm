@@ -1,0 +1,16 @@
+# 1. Ignore your virtual environment
+chatbot_env/
+
+# 2. Ignore your private API keys
+.env
+
+# 3. Ignore the pre-processed Vector Database
+# (You usually want to re-run ingestion locally rather than downloading a large DB)
+faiss_index/
+
+# 4. Ignore Python cache files
+__pycache__/
+*.py[cod]
+
+# 5. Ignore your raw documents (especially if they contain sensitive info)
+docs/

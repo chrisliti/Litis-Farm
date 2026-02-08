@@ -1,0 +1,7 @@
+# 2026 Recommended Stack for Gemini RAG
+streamlit
+langchain-google-genai
+langchain-community
+pypdf
+faiss-cpu
+python-dotenv
