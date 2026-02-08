@@ -3,6 +3,7 @@ streamlit
 langchain
 langchain-google-genai
 langchain-community
+langchain-openai
 pypdf
 faiss-cpu
 python-dotenv
