@@ -3,10 +3,9 @@ import os
 from dotenv import load_dotenv
 from langchain_community.vectorstores import FAISS
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
-# FIXED: Use the modern import path for RetrievalQA
 from langchain.chains import RetrievalQA
 
-# 1. Load Environment Variables (Works locally with .env, safely ignored on Streamlit)
+# 1. Load Environment Variables (for local development)
 load_dotenv()
 
 # --- ⚙️ UI CONFIGURATION ---
@@ -18,40 +17,47 @@ st.set_page_config(
 )
 
 # --- 📁 SETTINGS ---
-# Pull from os.environ (which includes Streamlit Secrets)
+# These pull from Streamlit Secrets (Cloud) or .env (Local)
 DB_PATH = os.getenv("VECTOR_DB_PATH", "faiss_index")
 EMB_MODEL = os.getenv("EMBEDDING_MODEL", "models/gemini-embedding-001")
 INF_MODEL = os.getenv("INFERENCE_MODEL", "models/gemini-2.5-flash")
 
-# Ensure API Key is available
+# --- 🔑 AUTHENTICATION ---
+# Mapping Streamlit Secrets to Environment Variables
 if "GOOGLE_API_KEY" in st.secrets:
     os.environ["GOOGLE_API_KEY"] = st.secrets["GOOGLE_API_KEY"]
 elif not os.getenv("GOOGLE_API_KEY"):
-    st.error("❌ GOOGLE_API_KEY missing. Add it to Streamlit Secrets or your .env file.")
+    st.error("❌ GOOGLE_API_KEY missing. Please add it to Streamlit Secrets.")
     st.stop()
 
 # --- 🧠 RAG INITIALIZATION ---
 @st.cache_resource
 def load_rag_chain():
-    # Look for the folder in the current directory
     if not os.path.exists(DB_PATH):
-        st.error(f"❌ Database folder '{DB_PATH}' not found. Ensure you pushed the folder to GitHub.")
+        st.error(f"❌ Database folder '{DB_PATH}' not found. Did you push it to GitHub?")
         st.stop()
 
+    # Initialize Embeddings
     embeddings = GoogleGenerativeAIEmbeddings(
         model=EMB_MODEL,
         task_type="RETRIEVAL_QUERY"
     )
     
-    # allow_dangerous_deserialization is required for loading .pkl files in FAISS
+    # Load the local FAISS index
     db = FAISS.load_local(
         DB_PATH, 
         embeddings, 
         allow_dangerous_deserialization=True
     )
     
-    llm = ChatGoogleGenerativeAI(model=INF_MODEL, temperature=0.2)
+    # Initialize LLM with streaming enabled
+    llm = ChatGoogleGenerativeAI(
+        model=INF_MODEL, 
+        temperature=0.2,
+        streaming=True
+    )
     
+    # Create the QA Chain
     return RetrievalQA.from_chain_type(
         llm=llm, 
         chain_type="stuff",
@@ -59,11 +65,11 @@ def load_rag_chain():
         return_source_documents=True 
     )
 
-# Try/Except block helps catch specific connection or credential issues
+# Load the chain
 try:
     qa_chain = load_rag_chain()
 except Exception as e:
-    st.error(f"Initialization Error: {e}")
+    st.error(f"Failed to initialize RAG: {e}")
     st.stop()
 
 # --- 💬 UI HEADER ---
@@ -96,37 +102,46 @@ for message in st.session_state.messages:
 
 # --- 🚀 CHAT INTERACTION ---
 if prompt := st.chat_input("Ask about LitisFarm..."):
+    # 1. User Message
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
+    # 2. Assistant Message with Streaming
     with st.chat_message("assistant"):
-        with st.spinner("Analyzing docs..."):
-            # Use invoke for modern LangChain compatibility
-            response = qa_chain.invoke({"query": prompt})
-            answer = response["result"]
-            source_docs = response.get("source_documents", [])
+        # We fetch sources first (fast, non-streamed)
+        with st.spinner("Searching documents..."):
+            source_docs = qa_chain.retriever.invoke(prompt)
             
-            st.markdown(answer)
-            
-            citations = []
-            if source_docs:
-                with st.expander("📚 View Citations"):
-                    for i, doc in enumerate(source_docs):
-                        # Extract metadata safely
-                        source_path = doc.metadata.get('source', 'Unknown')
-                        file_name = os.path.basename(source_path)
-                        page_num = doc.metadata.get('page', 0) + 1
-                        
-                        cite = f"{file_name} (Page {page_num})"
-                        citations.append(cite)
-                        
-                        st.markdown(f"**Source {i+1}:** {cite}")
-                        st.caption(f"\"{doc.page_content[:150]}...\"")
-                        if i < len(source_docs) - 1: st.divider()
+        # Define a generator for the stream
+        def response_generator():
+            # qa_chain.stream returns a dict; we yield the 'result' chunk
+            for chunk in qa_chain.stream({"query": prompt}):
+                if "result" in chunk:
+                    yield chunk["result"]
+        
+        # Stream the text to the UI
+        answer = st.write_stream(response_generator())
 
-            st.session_state.messages.append({
-                "role": "assistant", 
-                "content": answer,
-                "sources": citations
-            })
+        # 3. Handle Citations
+        citations = []
+        if source_docs:
+            with st.expander("📚 View Citations"):
+                for i, doc in enumerate(source_docs):
+                    source_path = doc.metadata.get('source', 'Unknown')
+                    file_name = os.path.basename(source_path)
+                    page_num = doc.metadata.get('page', 0) + 1
+                    
+                    cite = f"{file_name} (Page {page_num})"
+                    citations.append(cite)
+                    
+                    st.markdown(f"**Source {i+1}:** {cite}")
+                    st.caption(f"\"{doc.page_content[:150]}...\"")
+                    if i < len(source_docs) - 1: st.divider()
+
+        # 4. Save to session state
+        st.session_state.messages.append({
+            "role": "assistant", 
+            "content": answer,
+            "sources": citations
+        })
