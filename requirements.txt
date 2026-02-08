@@ -1,9 +1,9 @@
 # 2026 Recommended Stack for Gemini RAG
-streamlit
-langchain
-langchain-google-genai
-langchain-community
-langchain-openai
-pypdf
-faiss-cpu
-python-dotenv
+streamlit==1.50.0
+langchain==0.3.27
+langchain-google-genai==2.1.12
+langchain-community==0.3.31
+langchain-openai==0.3.35
+pypdf==6.6.2
+faiss-cpu==1.13.0
+python-dotenv==1.2.1
